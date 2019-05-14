@@ -75,6 +75,9 @@ var reachedTheEnd1=false
 var whitelistList []string
 var blacklistList []string
 
+var identUser = ""
+var identPass = ""
+
 var userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.27 Safari/537.36"
         
 func f(from string) {
@@ -105,17 +108,12 @@ func lookupURI(searchTerm string) ([]string) {
 				rows.Scan(&dataSource,&filename,&uriPath,&category)
 				fmt.Println(dataSource+"\t"+filename+"\t"+uriPath+"\t"+category)
 			}
-			_=dataSource
-			_=filename
 		}
 	}
 	return results
 }
 
 func getRemoteSize(url string) (int64) {
-	 subStringsSlice := strings.Split(url, "/")
-	 fileName := subStringsSlice[len(subStringsSlice)-1]
-
 	 resp, err := http.Head(url)
 	 if err != nil {
 			 fmt.Println("[-] Please check your Internet connection. Unable to connect to raw.githubusercontent.com.")
@@ -127,7 +125,6 @@ func getRemoteSize(url string) (int64) {
 	 }
 	 size, _ := strconv.Atoi(resp.Header.Get("Content-Length"))
 	 downloadSize := int64(size)
-	 _=fileName
 	 return downloadSize
 }
  func getFileSize(filename string) (int64){
@@ -156,7 +153,6 @@ func getRemoteSize(url string) (int64) {
 		} else {
 			return true
 		}
-		_ = err
 	 } else {
 		 var localFileSize=getFileSize(fileName)		
 		 downloadSize:=getRemoteSize(downloadUrl)
@@ -168,7 +164,6 @@ func getRemoteSize(url string) (int64) {
 			} else {
 				return true
 			}
-			_ = err
 		 } else {
 		 	return false
 		 }	
@@ -187,9 +182,7 @@ func checkWebsite(urlChan chan string) (string,bool) {
 		timeout := time.Duration(time.Duration(timeoutSec) * time.Second)
 		client := http.Client{
 			Timeout: timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		        	return http.ErrUseLastResponse
-		    	},		
+			CheckRedirect: redirectPolicyFunc,
 		}
 		if proxyMode==true {
 			url_i := url.URL{}
@@ -198,7 +191,14 @@ func checkWebsite(urlChan chan string) (string,bool) {
 		}
 		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		req, err := http.NewRequest("GET", newURL1, nil)
+		req.SetBasicAuth(identUser, identPass)
+
 		if err==nil {
+			if (len(identUser) + len(identPass) > 0) {
+				req.SetBasicAuth(identUser, identPass)
+				req.Header.Add("User-Agent", userAgent)
+
+			}
 			req.Header.Add("User-Agent", userAgent)
 			resp, err := client.Do(req)			
 			if resp!=nil{					
@@ -208,8 +208,7 @@ func checkWebsite(urlChan chan string) (string,bool) {
 				fmt.Println(newURL1+" "+strconv.Itoa(resp.StatusCode))		
 				websiteUp=true		
 			} 
-			_=resp
-		} 		
+		}
 		return newURL1,websiteUp
 	}
 	return currentURL,websiteUp
@@ -226,9 +225,7 @@ func getPageBody(tmpUrl string) (string) {
 	timeout := time.Duration(time.Duration(timeoutSec) * time.Second)
 	client := http.Client{
 		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},					
+		CheckRedirect: redirectPolicyFunc,
 	}
 	if proxyMode==true {
 		url_i := url.URL{}
@@ -239,6 +236,7 @@ func getPageBody(tmpUrl string) (string) {
 
 	req, err := http.NewRequest("GET", tmpUrl, nil)
 	if err==nil {
+		req.SetBasicAuth(identUser, identPass)
 		req.Header.Add("User-Agent", userAgent)
 		resp, err := client.Do(req)		
 		if resp!=nil{					
@@ -412,6 +410,13 @@ func removeCharacters(input string, characters string) string {
 	 return strings.Map(filter, input)
 }
 
+func redirectPolicyFunc(req *http.Request, via []*http.Request) error{
+	if (len(identUser) + len(identPass)) > 0 {
+		req.SetBasicAuth(identUser, identPass)
+	}
+	return http.ErrUseLastResponse
+}
+
 func getPage(newURL1 string) (string, string, int, int) {
 	var tmpStatusCode = 0
 	var tmpTitle = ""
@@ -420,9 +425,7 @@ func getPage(newURL1 string) (string, string, int, int) {
 	timeout := time.Duration(time.Duration(timeoutSec) * time.Second)
 	client := http.Client{
 		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-        	return http.ErrUseLastResponse
-    	},		
+		CheckRedirect: redirectPolicyFunc,		
 	}
 	if proxyMode==true {
 		url_i := url.URL{}
@@ -433,6 +436,7 @@ func getPage(newURL1 string) (string, string, int, int) {
 	req, err := http.NewRequest("GET", newURL1, nil)
 	if err==nil {
 		req.Header.Add("User-Agent", userAgent)
+		req.SetBasicAuth(identUser, identPass)
 		resp, err := client.Do(req)		
 		if resp!=nil{					
 			defer resp.Body.Close()
@@ -520,7 +524,6 @@ func testFakePath(urlChan chan string) {
 }
 func pathPrediction(newUrl string, statusCode int) (string) {
 	var newPath=""
-	var lastCount=0
 	var tmpFinalPath=""
 	var finalURL=""
 	var voidPath=false
@@ -531,10 +534,10 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 	if err==nil {
 		result := strings.Split(u.Path, "/")		
 		if len(u.Path)>0 {
-			var tmpCount=1
-			for i := range result {
+			for tmpCount := 1; tmpCount < len(result); tmpCount++ {
+			// for i := range result {
 				newPath=strings.Replace(u.Path,result[tmpCount],result[tmpCount]+"xx",1)
-				tmpFinalURL,tmpTitle,tmpStatusCode, lenBody:=getPage(u.Scheme+"://"+u.Host+newPath)
+				_,_,tmpStatusCode, _:=getPage(u.Scheme+"://"+u.Host+newPath)
 				//if enableDebug==true {
 				//	fmt.Println("[debug1] "+newUrl+" -> "+newPath+" ["+strconv.Itoa(tmpStatusCode)+"]")					
 				//}
@@ -542,18 +545,14 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 					tmpFinalPath=tmpFinalPath+"/"+result[tmpCount]
 					var newUrl1=u.Scheme+"://"+u.Host+tmpFinalPath
 					if newUrl1!=newUrl {
-						getTmpFinalURL1,getTmpTitle1,getTmpStatusCode1,getLenBody1:=getPage(newUrl1)					
+						_,_,getTmpStatusCode1,_:=getPage(newUrl1)
 						if enableDebug==true {
 							fmt.Println("[debug2] "+newUrl+" -> "+tmpFinalPath+" ["+strconv.Itoa(getTmpStatusCode1)+"]")					
 						}
-						_=getTmpFinalURL1
-						_=getTmpTitle1
-						_=getTmpStatusCode1
-						_=getLenBody1
 					}
 					if !strings.HasSuffix(newUrl,"/") {
 						var newUrl4=u.Scheme+"://"+u.Host+tmpFinalPath+"xxx"
-						getTmpFinalURL2,getTmpTitle2,getTmpStatusCode2,getLenBody2:=getPage(newUrl4)
+						_,_,getTmpStatusCode2,_:=getPage(newUrl4)
 						if enableDebug==true {
 							fmt.Println("[debug3] "+newUrl+" -> "+tmpFinalPath+"xxx ["+strconv.Itoa(getTmpStatusCode2)+"]")
 						}
@@ -569,7 +568,7 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 						}
 						if !strings.Contains( u.Path,".") {					
 							newUrl4=u.Scheme+"://"+u.Host+tmpFinalPath+"/xxx"
-							getTmpFinalURL2,getTmpTitle2,getTmpStatusCode2,getLenBody2=getPage(newUrl4)
+							_,_,getTmpStatusCode2,_=getPage(newUrl4)
 							if enableDebug==true {
 								fmt.Println("[debug4] "+newUrl+" -> "+tmpFinalPath+"/xxx ["+strconv.Itoa(getTmpStatusCode2)+"]")
 							}
@@ -581,38 +580,30 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 									finalURL=u.Scheme+"://"+u.Host
 								}
 							}
-							_=getTmpFinalURL2
-							_=getTmpTitle2
-							_=getTmpStatusCode2
-							_=getLenBody2	
 						}						
 					} 
 				} else {
 					tmpFinalPath=tmpFinalPath+"/"+result[tmpCount]
 					var newUrl1=u.Scheme+"://"+u.Host+tmpFinalPath
-					getTmpFinalURL1,getTmpTitle1,getTmpStatusCode1,getLenBody1:=getPage(newUrl1)
+					_,_,getTmpStatusCode1,getLenBody1:=getPage(newUrl1)
 					if enableDebug==true {
 						if newUrl!=newUrl1 {
 							fmt.Println("[debug5] "+newUrl+" -> "+tmpFinalPath+" ["+strconv.Itoa(getTmpStatusCode1)+"]")
 							if statusCode==getTmpStatusCode1 && statusCode==200 {
-								getTmpFinalURL2,getTmpTitle2,getTmpStatusCode2,getLenBody2:=getPage(newUrl)
+								_,_,_,getLenBody2:=getPage(newUrl)
 								if getLenBody1!=getLenBody2 {
 										if enableDebug==true {									
 											fmt.Println("[predict3]")
 										}
 										finalURL=newUrl
-								}		
-								_=getTmpFinalURL2
-								_=getTmpTitle2
-								_=getTmpStatusCode2
-								_=getLenBody2
+								}
 							}
 						}
 					}
 					if strings.Contains( u.Path,".") {					
 						//////
 						var newUrl4=u.Scheme+"://"+u.Host+tmpFinalPath+"xxx"
-						getTmpFinalURL2,getTmpTitle2,getTmpStatusCode2,getLenBody2:=getPage(newUrl4)
+						_,_,getTmpStatusCode2,_:=getPage(newUrl4)
 						if enableDebug==true {
 							fmt.Println("[debug6] "+newUrl+" -> "+tmpFinalPath+"xxx ["+strconv.Itoa(getTmpStatusCode2)+"]")
 						}
@@ -632,7 +623,7 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 							}					
 						}
 						newUrl4=u.Scheme+"://"+u.Host+tmpFinalPath+"/xxx"
-						getTmpFinalURL2,getTmpTitle2,getTmpStatusCode2,getLenBody2=getPage(newUrl4)
+						_,_,getTmpStatusCode2,_=getPage(newUrl4)
 						if enableDebug==true {
 							fmt.Println("[debug8] "+newUrl+" -> "+tmpFinalPath+"/xxx ["+strconv.Itoa(getTmpStatusCode2)+"]")
 						}
@@ -651,13 +642,9 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 								} 
 							}
 						}
-						_=getTmpFinalURL2
-						_=getTmpTitle2
-						_=getTmpStatusCode2
-						_=getLenBody2
 					} else {
 						var newUrl4=u.Scheme+"://"+u.Host+tmpFinalPath+"/xxx/"
-						getTmpFinalURL2,getTmpTitle2,getTmpStatusCode2,getLenBody2:=getPage(newUrl4)
+						_,_,getTmpStatusCode2,_:=getPage(newUrl4)
 						if enableDebug==true {
 							fmt.Println("[debug10] "+newUrl+" -> "+tmpFinalPath+"/xxx/ ["+strconv.Itoa(getTmpStatusCode2)+"]")
 						}
@@ -680,7 +667,7 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 							fmt.Println("[debug11] "+newUrl+" -> "+tmpFinalPath+" ["+strconv.Itoa(getTmpStatusCode1)+"]")	
 						}
 						newUrl4=u.Scheme+"://"+u.Host+tmpFinalPath+"/xxx/"
-						getTmpFinalURL2,getTmpTitle2,getTmpStatusCode2,getLenBody2=getPage(newUrl4)
+						_,_,getTmpStatusCode2,_=getPage(newUrl4)
 						if enableDebug==true {
 							fmt.Println("[debug12] "+newUrl+" -> "+tmpFinalPath+"/xxx/ ["+strconv.Itoa(getTmpStatusCode2)+"]")
 						}
@@ -699,10 +686,6 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 								} 
 							}
 						}
-						_=getTmpFinalURL2
-						_=getTmpTitle2
-						_=getTmpStatusCode2
-						_=getLenBody2
 					}	
 					if getTmpStatusCode1!=statusCode{
 						lenCount1 := strings.Count(tmpFinalPath, "/")
@@ -710,7 +693,7 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 							lenCount2 := strings.Count(u.Path, ".")
 							if lenCount2>0 {							
 								var newUrl2=u.Scheme+"://"+u.Host+"/xxx.jsp"
-								getTmpFinalURL2,getTmpTitle2,getTmpStatusCode2,getLenBody2:=getPage(newUrl2)
+								_,_,getTmpStatusCode2,_:=getPage(newUrl2)
 								if enableDebug==true {
 									fmt.Println("[debug13] "+newUrl+" -> /xxx.jsp ["+strconv.Itoa(getTmpStatusCode2)+"]")
 								}
@@ -721,7 +704,7 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 									finalURL=u.Scheme+"://"+u.Host
 								}
 								var newUrl3=u.Scheme+"://"+u.Host+"/NonExistence/xxx.jsp"
-								getTmpFinalURL3,getTmpTitle3,getTmpStatusCode3,getLenBody3:=getPage(newUrl3)
+								_,_,getTmpStatusCode3,_:=getPage(newUrl3)
 								if enableDebug==true {
 									fmt.Println("[debug14] "+newUrl+" -> /NonExistence/xxx.jsp ["+strconv.Itoa(getTmpStatusCode3)+"]")
 								}
@@ -734,14 +717,6 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 										finalURL=u.Scheme+"://"+u.Host
 									}
 								}
-								_=getTmpFinalURL3
-								_=getTmpTitle3
-								_=getTmpStatusCode3
-								_=getLenBody3					
-								_=getTmpFinalURL2
-								_=getTmpTitle2
-								_=getTmpStatusCode2
-								_=getLenBody2							
 							} 
 						} else {				
 							lenCount1 := strings.Count(tmpFinalPath, "/")	
@@ -753,7 +728,7 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 								} else {
 									newUrl2=u.Scheme+"://"+u.Host+"/xxx"
 								}
-								getTmpFinalURL2,getTmpTitle2,getTmpStatusCode2,getLenBody2:=getPage(newUrl2)
+								_,_,getTmpStatusCode2,_:=getPage(newUrl2)
 								if getTmpStatusCode1==getTmpStatusCode2 {
 									if checkStatusCode(getTmpStatusCode2)==true {						
 										fmt.Println("[predict10]")
@@ -766,27 +741,13 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 									}
 									finalURL=u.Scheme+"://"+u.Host
 								}
-
-								_=getTmpFinalURL2
-								_=getTmpTitle2
-								_=getTmpStatusCode2
-								_=getLenBody2
 							} 
 						}
 					}
-					_=getTmpFinalURL1
-					_=getTmpTitle1
-					_=getLenBody1
-
 				}
 				if tmpCount==len(result)-1 {
 					break
-				}					
-				tmpCount+=1
-				_=tmpFinalURL
-				_=tmpTitle
-				_=lenBody
-				_=i
+				}
 			}
 		}
 	}
@@ -811,7 +772,6 @@ func pathPrediction(newUrl string, statusCode int) (string) {
 			result=newUrl
 		}
 	}
-	_=lastCount
 	return result
 }
 func addToCompleteList(newUrl string) {
@@ -824,9 +784,7 @@ func checkURL1(v string) {
 	timeout := time.Duration(time.Duration(timeoutSec) * time.Second)
 	client := http.Client{
 		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},				
+		CheckRedirect: redirectPolicyFunc,				
 	}
 	if proxyMode==true {
 		url_i := url.URL{}
@@ -836,6 +794,7 @@ func checkURL1(v string) {
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	req, err := http.NewRequest("GET", v, nil)
 	req.Header.Add("User-Agent", userAgent)
+	req.SetBasicAuth(identUser, identPass)
 	resp, err := client.Do(req)		
 	if resp!=nil{					
 		defer resp.Body.Close()
@@ -877,10 +836,8 @@ func checkURL1(v string) {
 				tmpSplit2 :=strings.Split(u.Path,"/")
 				var counter1=numberOfa
 				if numberOfa<3 {	
-					var newURL3=u.Scheme+"://"+u.Host	
-					getTmpFinalURL3,getTmpTitle3,getTmpStatusCode3,getLenBody3:=getPage(newURL3)
-					var getTmpFinalURL4=""
-					var getTmpTitle4=""
+					// var newURL3=u.Scheme+"://"+u.Host
+					// getTmpFinalURL3,getTmpTitle3,getTmpStatusCode3,getLenBody3:=getPage(newURL3)
 					var getTmpStatusCode4=0
 					var getLenBody4=0
 					var newURL4=""
@@ -892,7 +849,7 @@ func checkURL1(v string) {
 
 							tmpSplit3 :=strings.Split(u.Path,fileExt)
 							newURL4=u.Scheme+"://"+u.Host+tmpSplit3[0]+"xxx"+fileExt
-							getTmpFinalURL4,getTmpTitle4,getTmpStatusCode4,getLenBody4=getPage(newURL4)
+							_,_,getTmpStatusCode4,getLenBody4=getPage(newURL4)
 							if enableDebug==true {
 								fmt.Println("[debug15] "+newURL4+" ["+strconv.Itoa(getTmpStatusCode4)+"]")
 							}
@@ -917,14 +874,6 @@ func checkURL1(v string) {
 							}
 						}
 					}
-					_=getTmpFinalURL4
-					_=getTmpTitle4
-					_=getTmpStatusCode4
-					_=getLenBody4
-					_=getTmpFinalURL3
-					_=getTmpTitle3
-					_=getTmpStatusCode3
-					_=getLenBody3
 				} else {
 					for counter1>numberOfa-1 {							
 						var uriPath1=""				
@@ -938,6 +887,7 @@ func checkURL1(v string) {
 						req1, err := http.NewRequest("GET", newURL, nil)
 						if err==nil {
 							req1.Header.Add("User-Agent", userAgent)
+							req1.SetBasicAuth(identUser, identPass)
 							resp1, err := client.Do(req1)		
 							if resp1!=nil{					
 								defer resp1.Body.Close()
@@ -961,12 +911,13 @@ func checkURL1(v string) {
 											var newURL1=u.Scheme+"://"+u.Host+uriPath2
 											req2, err := http.NewRequest("GET", newURL1, nil)
 											req2.Header.Add("User-Agent", userAgent)
+											req2.SetBasicAuth(identUser, identPass)
 											resp2, err := client.Do(req2)														
 											if resp2!=nil{					
 												defer resp2.Body.Close()
 											}
 											if err==nil {
-												body2, err2 := ioutil.ReadAll(resp2.Body)
+												body2, _ := ioutil.ReadAll(resp2.Body)
 												if enableDebug==true {
 													fmt.Println("[debug18] "+newURL1+" ["+strconv.Itoa(resp2.StatusCode)+"]")
 												}
@@ -983,16 +934,14 @@ func checkURL1(v string) {
 													if !stringInSlice(v,tmpResultList3) {
 														tmpResultList3 = append(tmpResultList3, v)
 													}
-												}												
-												_=err2
+												}
 											}
-											_ = resp2
 										} else {			
 											var newURL1 = newURL[0:len(newURL)-1]
-											req2, err := http.NewRequest("GET", newURL1, nil)
-											_=err
+											req2, _ := http.NewRequest("GET", newURL1, nil)
 											req2.Header.Add("User-Agent", userAgent)
-											resp2, err := client.Do(req2)	
+											req2.SetBasicAuth(identUser, identPass)
+											resp2, _ := client.Do(req2)
 											if resp2!=nil{					
 												defer resp2.Body.Close()
 											}
@@ -1014,8 +963,9 @@ func checkURL1(v string) {
 											panic(err)
 										}
 										var newURL2=u1.Scheme+"://"+u1.Host
-										req2, err := http.NewRequest("GET", newURL2, nil)
+										req2, _ := http.NewRequest("GET", newURL2, nil)
 										req2.Header.Add("User-Agent", userAgent)
+										req2.SetBasicAuth(identUser, identPass)
 										resp2, err := client.Do(req2)														
 										if resp2!=nil{					
 											defer resp2.Body.Close()
@@ -1033,14 +983,11 @@ func checkURL1(v string) {
 							} else {
 								fmt.Println(err)
 							}
-							_=err							
 						} else {
 							fmt.Println(err)
 						}
 						counter1-=1
 					}
-					_ = initialStatusCode
-					_ = initialPageSize
 				}
 			}
 		}
@@ -1054,9 +1001,7 @@ func checkURL1(v string) {
 		timeout := time.Duration(time.Duration(timeoutSec) * time.Second)
 		client := http.Client{
 			Timeout: timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},				
+			CheckRedirect: redirectPolicyFunc,
 		}
 		v1, err := url.Parse(v)
     	if err != nil {
@@ -1065,6 +1010,7 @@ func checkURL1(v string) {
     	if v1.Path!="/" {
 			req2, err := http.NewRequest("GET", v, nil)
 			req2.Header.Add("User-Agent", userAgent)
+			req2.SetBasicAuth(identUser, identPass)
 			resp2, err := client.Do(req2)														
 			if resp2!=nil{					
 				defer resp2.Body.Close()
@@ -1226,9 +1172,7 @@ func checkURL(urlChan chan string) {
 		timeout := time.Duration(time.Duration(timeoutSec) * time.Second)
 		client := http.Client{
 			Timeout: timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},				
+			CheckRedirect: redirectPolicyFunc,
 		}
 		if proxyMode==true {
 			url_i := url.URL{}
@@ -1239,6 +1183,7 @@ func checkURL(urlChan chan string) {
 		req, err := http.NewRequest("GET", v, nil)
 		if err==nil {
 			req.Header.Add("User-Agent", userAgent)
+			req.SetBasicAuth(identUser, identPass)
 			resp, err := client.Do(req)		
 			if resp!=nil{					
 				defer resp.Body.Close()
@@ -1280,10 +1225,8 @@ func checkURL(urlChan chan string) {
 								tmpSplit2 :=strings.Split(u.Path,"/")
 								var counter1=numberOfa
 								if numberOfa<3 {	
-									var newURL3=u.Scheme+"://"+u.Host	
-									getTmpFinalURL3,getTmpTitle3,getTmpStatusCode3,getLenBody3:=getPage(newURL3)
-									var getTmpFinalURL4=""
-									var getTmpTitle4=""
+									// var newURL3=u.Scheme+"://"+u.Host
+									// getTmpFinalURL3,getTmpTitle3,getTmpStatusCode3,getLenBody3:=getPage(newURL3)
 									var getTmpStatusCode4=0
 									var getLenBody4=0
 									var newURL4=""
@@ -1295,7 +1238,7 @@ func checkURL(urlChan chan string) {
 
 											tmpSplit3 :=strings.Split(u.Path,fileExt)
 											newURL4=u.Scheme+"://"+u.Host+tmpSplit3[0]+"xxx"+fileExt
-											getTmpFinalURL4,getTmpTitle4,getTmpStatusCode4,getLenBody4=getPage(newURL4)
+											_,_,getTmpStatusCode4,getLenBody4=getPage(newURL4)
 											if enableDebug==true {
 												fmt.Println("[debug15] "+newURL4+" ["+strconv.Itoa(getTmpStatusCode4)+"]")
 											}
@@ -1320,14 +1263,6 @@ func checkURL(urlChan chan string) {
 											}
 										}
 									}
-									_=getTmpFinalURL4
-									_=getTmpTitle4
-									_=getTmpStatusCode4
-									_=getLenBody4
-									_=getTmpFinalURL3
-									_=getTmpTitle3
-									_=getTmpStatusCode3
-									_=getLenBody3
 								} else {
 									for counter1>numberOfa-1 {							
 										var uriPath1=""				
@@ -1341,6 +1276,7 @@ func checkURL(urlChan chan string) {
 										req1, err := http.NewRequest("GET", newURL, nil)
 										if err==nil {
 											req1.Header.Add("User-Agent", userAgent)
+											req1.SetBasicAuth(identUser, identPass)
 											resp1, err := client.Do(req1)		
 											if resp1!=nil{					
 												defer resp1.Body.Close()
@@ -1364,12 +1300,13 @@ func checkURL(urlChan chan string) {
 															var newURL1=u.Scheme+"://"+u.Host+uriPath2
 															req2, err := http.NewRequest("GET", newURL1, nil)
 															req2.Header.Add("User-Agent", userAgent)
+															req2.SetBasicAuth(identUser, identPass)
 															resp2, err := client.Do(req2)														
 															if resp2!=nil{					
 																defer resp2.Body.Close()
 															}
 															if err==nil {
-																body2, err2 := ioutil.ReadAll(resp2.Body)
+																body2, _ := ioutil.ReadAll(resp2.Body)
 																if enableDebug==true {
 																	fmt.Println("[debug18] "+newURL1+" ["+strconv.Itoa(resp2.StatusCode)+"]")
 																}
@@ -1386,16 +1323,14 @@ func checkURL(urlChan chan string) {
 																	if !stringInSlice(v,tmpResultList3) {
 																		tmpResultList3 = append(tmpResultList3, v)
 																	}
-																}												
-																_=err2
+																}
 															}
-															_ = resp2
 														} else {			
 															var newURL1 = newURL[0:len(newURL)-1]
-															req2, err := http.NewRequest("GET", newURL1, nil)
-															_=err
+															req2, _ := http.NewRequest("GET", newURL1, nil)
 															req2.Header.Add("User-Agent", userAgent)
-															resp2, err := client.Do(req2)	
+															req2.SetBasicAuth(identUser, identPass)
+															resp2, _ := client.Do(req2)
 															if resp2!=nil{					
 																defer resp2.Body.Close()
 															}
@@ -1419,6 +1354,7 @@ func checkURL(urlChan chan string) {
 														var newURL2=u1.Scheme+"://"+u1.Host
 														req2, err := http.NewRequest("GET", newURL2, nil)
 														req2.Header.Add("User-Agent", userAgent)
+														req2.SetBasicAuth(identUser, identPass)
 														resp2, err := client.Do(req2)														
 														if resp2!=nil{					
 															defer resp2.Body.Close()
@@ -1436,14 +1372,11 @@ func checkURL(urlChan chan string) {
 											} else {
 												fmt.Println(err)
 											}
-											_=err							
 										} else {
 											fmt.Println(err)
 										}
 										counter1-=1
 									}
-									_ = initialStatusCode
-									_ = initialPageSize
 								}
 							}
 						}
@@ -1460,9 +1393,7 @@ func checkURL(urlChan chan string) {
 		timeout := time.Duration(time.Duration(timeoutSec) * time.Second)
 		client := http.Client{
 			Timeout: timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},				
+			CheckRedirect: redirectPolicyFunc,
 		}
 		v1, err := url.Parse(v)
     	if err != nil {
@@ -1471,6 +1402,7 @@ func checkURL(urlChan chan string) {
     	if v1.Path!="/" {
 			req2, err := http.NewRequest("GET", v, nil)
 			req2.Header.Add("User-Agent", userAgent)
+			req2.SetBasicAuth(identUser, identPass)
 			resp2, err := client.Do(req2)														
 			if resp2!=nil{					
 				defer resp2.Body.Close()
@@ -1633,9 +1565,7 @@ func testURL(newUrl string) {
 		timeout := time.Duration(time.Duration(timeoutSec) * time.Second)
 		client := http.Client{
 			Timeout: timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},					
+			CheckRedirect: redirectPolicyFunc,	
 		}
 		if proxyMode==true {
 			url_i := url.URL{}
@@ -1646,8 +1576,8 @@ func testURL(newUrl string) {
 		req, err := http.NewRequest("GET", newUrl, nil)
 		if err==nil {
 			req.Header.Add("User-Agent", userAgent)
+			req.SetBasicAuth(identUser, identPass)
 			initialStatusCode := ""
-			var tmpTitle = ""
 			resp, err := client.Do(req)			
 			if resp!=nil{					
 				defer resp.Body.Close()
@@ -1700,8 +1630,7 @@ func testURL(newUrl string) {
 				s, err := goscraper.Scrape(newUrl, 5)
 				if err==nil {
 					initialTmpTitle = s.Preview.Title
-				}	
-				_ = s
+				}
 				if verboseMode==true {
 					var lenBody = 0
 					body, err := ioutil.ReadAll(resp.Body)
@@ -1752,30 +1681,27 @@ func testURL(newUrl string) {
 								if tmpFound==true {
 									tmpTitle=strings.Replace(tmpTitle,"\n"," ",1)
 									if tmpStatusCode=="200"{
-										i, err :=strconv.Atoi(initialStatusCode) 
+										i, _ :=strconv.Atoi(initialStatusCode)
 										if (Excludecode==0 && Excludecode!=i) || (Statuscode!=0 && Statuscode==i) {																				
 											fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle,currentListCount,totalListCount)
 											log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 										}
-										_=err
 									} else if tmpStatusCode=="401"{
-										i, err :=strconv.Atoi(initialStatusCode) 
+										i, _ :=strconv.Atoi(initialStatusCode)
 										if (Excludecode==0 && Excludecode!=i) || (Statuscode!=0 && Statuscode==i) {										
 											fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.GreenString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)										
 											log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.GreenString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 										}
-										_=err
 									} else {
 										if initialStatusCode=="0" {
 											fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(""),  lenBody, tmpTitle, currentListCount,totalListCount)
 											log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(""),  lenBody, tmpTitle, currentListCount,totalListCount)
 										} else {
-											i, err :=strconv.Atoi(initialStatusCode) 
+											i, _ :=strconv.Atoi(initialStatusCode)
 											if (Excludecode==0 && Excludecode!=i) || (Statuscode!=0 && Statuscode==i) {										
 												fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 												log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 											}
-											_=err
 										}
 									}
 								}
@@ -1793,36 +1719,32 @@ func testURL(newUrl string) {
 								var a = [][]string{{newURL2, initialStatusCode, "",""}}
 								tmpResultList = append(tmpResultList,a...)
 							} else if (resp.StatusCode!=401 && initialStatusCode=="401") {
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 && Excludecode!=i) || (Statuscode!=0 && Statuscode==i) {								
 									fmt.Printf("%s [code:%s] [%d of %d]\n",newURL2, color.RedString(initialStatusCode), currentListCount,totalListCount)					
 									log.Printf("%s [code:%s] [%d of %d]\n",newURL2, color.RedString(initialStatusCode), currentListCount,totalListCount)
 								}
-								_=err
 								var a = [][]string{{newURL2, initialStatusCode, "",""}}
 								tmpResultList = append(tmpResultList,a...)
 							} else {
 								if tmpStatusCode=="200"{
-									i, err :=strconv.Atoi(initialStatusCode) 
+									i, _ :=strconv.Atoi(initialStatusCode)
 									if (Excludecode==0 && Excludecode!=i) || (Statuscode!=0 && Statuscode==i) {		
 										fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle,currentListCount,totalListCount)
 										log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 									}
-									_=err
 								} else if tmpStatusCode=="401"{
-									i, err :=strconv.Atoi(initialStatusCode) 
+									i, _ :=strconv.Atoi(initialStatusCode)
 									if (Excludecode==0 && Excludecode!=i) || (Statuscode!=0 && Statuscode==i) {		
 										fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.GreenString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)										
 										log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.GreenString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 									}
-									_=err
 								} else {
-									i, err :=strconv.Atoi(initialStatusCode) 
+									i, _ :=strconv.Atoi(initialStatusCode)
 									if (Excludecode==0 && Excludecode!=i) || (Statuscode!=0 && Statuscode==i) {								
 										fmt.Printf("3%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 										log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 									}
-									_=err
 								}
 							}
 						}
@@ -1830,48 +1752,43 @@ func testURL(newUrl string) {
 						tmpStatusCode := strconv.Itoa(resp.StatusCode)
 						if Statuscode!=0 {
 							if resp.StatusCode==Statuscode {
-								i, err :=strconv.Atoi(initialStatusCode) 	
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {									
 									fmt.Printf("2%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(tmpStatusCode), lenBody, tmpTitle, currentListCount,totalListCount)					
 									log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(tmpStatusCode), lenBody, tmpTitle, currentListCount,totalListCount)
 								}
-								_=err
 								var a = [][]string{{newUrl, tmpStatusCode, strconv.Itoa(lenBody),tmpTitle}}
 								tmpResultList = append(tmpResultList,a...)
 							} else {
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {		
 									fmt.Printf("1%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle,currentListCount,totalListCount)
 									log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle,currentListCount,totalListCount)
 								}
-								_=err
-							}						
+							}
 						} else {				
 							if tmpStatusCode=="200"{
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {		
 									fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(tmpStatusCode), lenBody, tmpTitle,currentListCount,totalListCount)					
 									log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(tmpStatusCode), lenBody, tmpTitle,currentListCount,totalListCount)
 								}
-								_=err
 								var a = [][]string{{newUrl, tmpStatusCode, strconv.Itoa(lenBody),tmpTitle}}
 								tmpResultList = append(tmpResultList,a...)
 							} else if tmpStatusCode=="401"{
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {							
 									fmt.Printf("%s [code:%s]\n",newUrl, color.GreenString(tmpStatusCode))
 									log.Printf("%s [code:%s]\n",newUrl, color.GreenString(tmpStatusCode))
 								}
-								_=err
 								var a = [][]string{{newUrl, tmpStatusCode, "",""}}
 								tmpResultList = append(tmpResultList,a...)
 							} else {
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {			
 									fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(tmpStatusCode), lenBody, tmpTitle, currentListCount,totalListCount)	
 									log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(tmpStatusCode), lenBody, tmpTitle, currentListCount,totalListCount)				
 								}
-								_=err
 							}
 						}
 					}
@@ -1915,7 +1832,6 @@ func testURL(newUrl string) {
 					}
 				}
 				resp.Body.Close()
-				_ = tmpTitle 
 			} 			
 
 		}
@@ -1935,9 +1851,7 @@ func getUrlWorker(urlChan chan string) {
 		timeout := time.Duration(time.Duration(timeoutSec) * time.Second)
 		client := http.Client{
 			Timeout: timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},					
+			CheckRedirect: redirectPolicyFunc,
 		}
 		if proxyMode==true {
 			url_i := url.URL{}
@@ -1948,8 +1862,8 @@ func getUrlWorker(urlChan chan string) {
 		req, err := http.NewRequest("GET", newUrl, nil)
 		if err==nil {
 			req.Header.Add("User-Agent", userAgent)
+			req.SetBasicAuth(identUser, identPass)
 			initialStatusCode := ""
-			var tmpTitle = ""
 			resp, err := client.Do(req)			
 			if resp!=nil{					
 				defer resp.Body.Close()
@@ -2002,8 +1916,7 @@ func getUrlWorker(urlChan chan string) {
 				s, err := goscraper.Scrape(newUrl, 5)
 				if err==nil {
 					initialTmpTitle = s.Preview.Title
-				}	
-				_ = s
+				}
 				if verboseMode==true {
 					var lenBody = 0
 					body, err := ioutil.ReadAll(resp.Body)
@@ -2054,30 +1967,27 @@ func getUrlWorker(urlChan chan string) {
 								if tmpFound==true {
 									tmpTitle=strings.Replace(tmpTitle,"\n"," ",1)
 									if tmpStatusCode=="200"{
-										i, err :=strconv.Atoi(initialStatusCode) 
+										i, _ :=strconv.Atoi(initialStatusCode)
 										if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {																				
 											fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle,currentListCount,totalListCount)
 											log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 										}
-										_=err
 									} else if tmpStatusCode=="401"{
-										i, err :=strconv.Atoi(initialStatusCode) 
+										i, _ :=strconv.Atoi(initialStatusCode)
 										if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {																				
 											fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.GreenString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)										
 											log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.GreenString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 										}
-										_=err
 									} else {
 										if initialStatusCode=="0" {
 											fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(""),  lenBody, tmpTitle, currentListCount,totalListCount)
 											log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(""),  lenBody, tmpTitle, currentListCount,totalListCount)
 										} else {
-											i, err :=strconv.Atoi(initialStatusCode) 
+											i, _ :=strconv.Atoi(initialStatusCode)
 											if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {		
 												fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 												log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 											}
-											_=err
 										}
 									}
 								}
@@ -2090,45 +2000,40 @@ func getUrlWorker(urlChan chan string) {
 							}				
 							var newURL2=u.Scheme+"://"+u.Host				
 							if resp.StatusCode==401 && initialStatusCode=="401" {
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {																		
 									fmt.Printf("%s [code:%s] [%d of %d]\n",newURL2, color.RedString(initialStatusCode), currentListCount,totalListCount)					
 									log.Printf("%s [code:%s] [%d of %d]\n",newURL2, color.RedString(initialStatusCode), currentListCount,totalListCount)
 								}
-								_=err
 								var a = [][]string{{newURL2, initialStatusCode, "",""}}
 								tmpResultList = append(tmpResultList,a...)
 							} else if (resp.StatusCode!=401 && initialStatusCode=="401") {
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {										
 									fmt.Printf("%s [code:%s] [%d of %d]\n",newURL2, color.RedString(initialStatusCode), currentListCount,totalListCount)					
 									log.Printf("%s [code:%s] [%d of %d]\n",newURL2, color.RedString(initialStatusCode), currentListCount,totalListCount)
 								}
-								_=err
 								var a = [][]string{{newURL2, initialStatusCode, "",""}}
 								tmpResultList = append(tmpResultList,a...)
 							} else {
 								if tmpStatusCode=="200"{
-									i, err :=strconv.Atoi(initialStatusCode) 
+									i, _ :=strconv.Atoi(initialStatusCode)
 									if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {																		
 										fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle,currentListCount,totalListCount)
 										log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 									}
-									_=err
 								} else if tmpStatusCode=="401"{
-									i, err :=strconv.Atoi(initialStatusCode) 
+									i, _ :=strconv.Atoi(initialStatusCode)
 									if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {											
 										fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.GreenString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)										
 										log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.GreenString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 									}
-									_=err
-								} else {						
-									i, err :=strconv.Atoi(initialStatusCode) 
+								} else {
+									i, _ :=strconv.Atoi(initialStatusCode)
 									if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {			
 										fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 										log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(initialStatusCode),  lenBody, tmpTitle, currentListCount,totalListCount)
 									}
-									_=err
 								}
 							}
 						}
@@ -2136,48 +2041,43 @@ func getUrlWorker(urlChan chan string) {
 						tmpStatusCode := strconv.Itoa(resp.StatusCode)
 						if Statuscode!=0 {
 							if resp.StatusCode==Statuscode {
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {																	
 									fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(tmpStatusCode), lenBody, tmpTitle, currentListCount,totalListCount)					
 									log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(tmpStatusCode), lenBody, tmpTitle, currentListCount,totalListCount)
 								}
-								_=err
 								var a = [][]string{{newUrl, tmpStatusCode, strconv.Itoa(lenBody),tmpTitle}}
 								tmpResultList = append(tmpResultList,a...)
 							} else {
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {		
 									fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle,currentListCount,totalListCount)
 									log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(initialStatusCode),  lenBody, tmpTitle,currentListCount,totalListCount)
 								}
-								_=err
-							}						
+							}
 						} else {				
 							if tmpStatusCode=="200"{
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {											
 									fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(tmpStatusCode), lenBody, tmpTitle,currentListCount,totalListCount)					
 									log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.BlueString(tmpStatusCode), lenBody, tmpTitle,currentListCount,totalListCount)
 								}
-								_=err
 								var a = [][]string{{newUrl, tmpStatusCode, strconv.Itoa(lenBody),tmpTitle}}
 								tmpResultList = append(tmpResultList,a...)
 							} else if tmpStatusCode=="401"{
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {											
 									fmt.Printf("%s [code:%s]\n",newUrl, color.GreenString(tmpStatusCode))
 									log.Printf("%s [code:%s]\n",newUrl, color.GreenString(tmpStatusCode))
 								}
-								_=err
 								var a = [][]string{{newUrl, tmpStatusCode, "",""}}
 								tmpResultList = append(tmpResultList,a...)
 							} else {
-								i, err :=strconv.Atoi(initialStatusCode) 
+								i, _ :=strconv.Atoi(initialStatusCode)
 								if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {		
 									fmt.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(tmpStatusCode), lenBody, tmpTitle, currentListCount,totalListCount)	
 									log.Printf("%s [code:%s] [%d] [%s] [%d of %d]\n",newUrl, color.RedString(tmpStatusCode), lenBody, tmpTitle, currentListCount,totalListCount)				
 								}
-								_=err
 							}
 						}
 					}
@@ -2185,12 +2085,11 @@ func getUrlWorker(urlChan chan string) {
 					if Statuscode!=0 {
 						tmpStatusCode := strconv.Itoa(resp.StatusCode)	
 						if resp.StatusCode==Statuscode {	
-							i, err :=strconv.Atoi(initialStatusCode) 
+							i, _ :=strconv.Atoi(initialStatusCode)
 							if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {																	
 								fmt.Printf("%s [code:%s]\n",newUrl, color.BlueString(tmpStatusCode))
 								log.Printf("%s [code:%s]\n",newUrl, color.BlueString(tmpStatusCode))
 							}
-							_=err
 							finalURL := resp.Request.URL.String()
 							if strings.HasSuffix(finalURL,"/") {
 								finalURL=finalURL[0:len(finalURL)-1]
@@ -2206,12 +2105,11 @@ func getUrlWorker(urlChan chan string) {
 					} else {
 						tmpStatusCode := strconv.Itoa(resp.StatusCode)	
 						if resp.StatusCode==200 {		
-							i, err :=strconv.Atoi(initialStatusCode) 
+							i, _ :=strconv.Atoi(initialStatusCode)
 							if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {											
 								fmt.Printf("%s [code:%s]\n",newUrl, color.BlueString(tmpStatusCode))
 								log.Printf("%s [code:%s]\n",newUrl, color.BlueString(tmpStatusCode))
 							}
-							_=err
 							finalURL := resp.Request.URL.String()
 							if strings.HasSuffix(finalURL,"/") {
 								finalURL=finalURL[0:len(finalURL)-1]
@@ -2223,17 +2121,15 @@ func getUrlWorker(urlChan chan string) {
 								}
 							}
 						} else {
-							i, err :=strconv.Atoi(initialStatusCode) 
+							i, _ :=strconv.Atoi(initialStatusCode)
 							if (Excludecode==0 || Excludecode!=i) && (Statuscode==0 || Statuscode==i) {		
 								fmt.Printf("%s [code:%s]\n",newUrl, color.RedString(tmpStatusCode))
 								log.Printf("%s [code:%s]\n",newUrl, color.RedString(tmpStatusCode))
 							}
-							_=err
-						}				
+						}
 					}
 				}
 				resp.Body.Close()
-				_ = tmpTitle 
 			} 			
 
 		}
@@ -2334,6 +2230,7 @@ type argT struct {
 	Skipmode bool `cli:"skip" usage:"Skip sites that don't give any useful results (e.g. OWA, VPN, etc)"`
 	Confirmmode bool `cli:"confirm" usage:"Confirm using more than 100 threads (use with -n option)"`
 	Lookupmode bool `cli:"q,query" usage:"Lookup URI paths that were found against ExploitDB)"`
+	Credentials string `cli:"d,ident" usage:"Set basicAuth user:pass"`
 }
 
 func main() {
@@ -2393,6 +2290,10 @@ func main() {
 			defer logfileF.Close()
 			log.SetOutput(logfileF)
 		}
+		if len(argv.Credentials)>0 {
+			s := strings.Split(argv.Credentials, ":")
+			identUser, identPass = s[0], s[1]
+		}
 		filename1 = argv.Filename
 		pFilename = argv.PFilename
 		Pathsource = argv.Pathsource
@@ -2436,7 +2337,6 @@ func main() {
 				fmt.Printf("[*] File %s not exists\n", pFilename)
 				os.Exit(3)
 			}
-			_ = err1
 			lines, err2 := readLines(pFilename)
 			if err2==nil {
 				for _, v := range lines {
@@ -2445,8 +2345,7 @@ func main() {
 						pathList = append(pathList, v)
 					}
 				}
-			}		
-			_ = err2
+			}
 		} 
 		if len(uriPath)>0 {
 			pathList = append(pathList, uriPath)
@@ -2472,9 +2371,7 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 				}
-				_ = err
 			}
-			_ = err1
 			lines, err2 := readLines(pFilename)
 			if err2==nil {
 				for _, v := range lines {
@@ -2484,7 +2381,6 @@ func main() {
 						}
 					}		
 			}
-			_ = err2
 		}		
 		if Pathsource=="msf" {
 			fileUrl := "https://raw.githubusercontent.com/milo2012/metasploitHelper/master/pathList.txt"
@@ -2508,7 +2404,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -2522,7 +2417,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -2535,7 +2429,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}
@@ -2561,7 +2454,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -2575,7 +2467,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -2588,7 +2479,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}		
@@ -2614,7 +2504,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -2628,7 +2517,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -2641,7 +2529,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}		
@@ -2667,7 +2554,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -2681,7 +2567,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -2694,7 +2579,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}		
@@ -2720,7 +2604,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -2734,7 +2617,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -2747,7 +2629,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}	
@@ -2773,7 +2654,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -2787,7 +2667,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -2800,7 +2679,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}	
@@ -2826,7 +2704,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -2840,7 +2717,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -2853,7 +2729,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}	
@@ -2879,7 +2754,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -2893,7 +2767,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -2906,7 +2779,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}	
@@ -2932,7 +2804,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -2946,7 +2817,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -2959,7 +2829,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}	
@@ -2985,7 +2854,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -2999,7 +2867,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -3012,7 +2879,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}	
@@ -3038,7 +2904,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -3052,7 +2917,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -3065,7 +2929,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}	
@@ -3091,7 +2954,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -3105,7 +2967,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -3118,7 +2979,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 
 			}
 		}
@@ -3144,7 +3004,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
 			} else {
 				_, err1 := os.Stat(extractFilename)
 				if os.IsNotExist(err1) {
@@ -3158,7 +3017,6 @@ func main() {
 							fmt.Println("[*] Error: ",err)
 						}						
 					}
-					_ = err
 				}
 				lines, err2 := readLines(extractFilename)
 				if err2==nil {
@@ -3171,8 +3029,6 @@ func main() {
 				} else {
 					fmt.Println(err2)
 				}
-				_ = err2
-
 			}
 		}
 		if len(argv.URLpath)<1 && len(argv.Filename)<1 {
@@ -3200,8 +3056,7 @@ func main() {
 						}
 						//fmt.Println("https://"+v)
 					}	
-				}	
-				_ = err
+				}
 			} else {
 				if strings.Contains(argv.URLpath,"http") {
 					contentList = append(contentList, argv.URLpath)
@@ -3387,9 +3242,7 @@ func main() {
 				timeout := time.Duration(time.Duration(timeoutSec) * time.Second)
 				client := http.Client{
 					Timeout: timeout,
-					CheckRedirect: func(req *http.Request, via []*http.Request) error {
-						return http.ErrUseLastResponse
-					},						
+					CheckRedirect: redirectPolicyFunc,		
 				}
 
 				if proxyMode==true {
@@ -3402,6 +3255,7 @@ func main() {
 
 					req, err := http.NewRequest("GET", v[0], nil)
 					req.Header.Add("User-Agent", userAgent)
+					req.SetBasicAuth(identUser, identPass)
 					resp, err := client.Do(req)		
 					if resp!=nil{					
 						defer resp.Body.Close()
@@ -3441,8 +3295,9 @@ func main() {
 						http.DefaultTransport.(*http.Transport).Proxy = http.ProxyURL(url_proxy)
 					}
 					http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-					req, err := http.NewRequest("GET", v[0], nil)
+					req, _ := http.NewRequest("GET", v[0], nil)
 					req.Header.Add("User-Agent", userAgent)
+					req.SetBasicAuth(identUser, identPass)
 					resp, err := client.Do(req)		
 					if resp!=nil{					
 						defer resp.Body.Close()
@@ -3480,8 +3335,9 @@ func main() {
 					}
 					http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
-					req, err := http.NewRequest("GET", v[0], nil)
+					req, _ := http.NewRequest("GET", v[0], nil)
 					req.Header.Add("User-Agent", userAgent)
+					req.SetBasicAuth(identUser, identPass)
 					resp, err := client.Do(req)		
 					if resp!=nil{					
 						defer resp.Body.Close()
@@ -3521,8 +3377,9 @@ func main() {
 					}
 					http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
-					req, err := http.NewRequest("GET", v[0], nil)
+					req, _ := http.NewRequest("GET", v[0], nil)
 					req.Header.Add("User-Agent", userAgent)
+					req.SetBasicAuth(identUser, identPass)
 					resp, err := client.Do(req)		
 					if resp!=nil{					
 						defer resp.Body.Close()
@@ -3670,63 +3527,57 @@ func main() {
 							for _, s1 := range s {
 								if strings.Contains(s1,"-") {
 									s2 := strings.Split(s1,"-")
-									va0, err := version.NewVersion(selectedVer)
-									va1, err := version.NewVersion(s2[0])
-									va2, err := version.NewVersion(s2[1])
+									va0, _ := version.NewVersion(selectedVer)
+									va1, _ := version.NewVersion(s2[0])
+									va2, _ := version.NewVersion(s2[1])
 									if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 										fmt.Printf("\n[Vuln] %s [%s]\n",v[2],v[3])
 										log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 									}
-									_ = err
 								} else if strings.Contains(s1,"<") {
 									s2 := strings.Split(s1,"<")
-									va0, err := version.NewVersion(selectedVer)
-									va1, err := version.NewVersion(s2[0])
-									va2, err := version.NewVersion(s2[1])
+									va0, _ := version.NewVersion(selectedVer)
+									va1, _ := version.NewVersion(s2[0])
+									va2, _ := version.NewVersion(s2[1])
 									if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 										fmt.Printf("\n[Vuln] %s [%s]\n",v[2],v[3])
 										log.Printf("[Vuln] %s [%s]\n",v[2],v[3])
 									}
-									_ = err		
 								} else { 
-									va0, err := version.NewVersion(selectedVer)
-									va1, err := version.NewVersion(s1)
+									va0, _ := version.NewVersion(selectedVer)
+									va1, _ := version.NewVersion(s1)
 									if va0.Equal(va1) {
 										fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 										log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 									}
-									_ = err
 								}
 							}	
 						} else {
 							if strings.Contains(v[1],"-") {
 								s2 := strings.Split(v[1],"-")
-								va0, err := version.NewVersion(selectedVer)
-								va1, err := version.NewVersion(s2[0])
-								va2, err := version.NewVersion(s2[1])
+								va0, _ := version.NewVersion(selectedVer)
+								va1, _ := version.NewVersion(s2[0])
+								va2, _ := version.NewVersion(s2[1])
 								if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 									fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 									log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 								}
-								_ = err
 							} else if strings.Contains(v[1],"<") {
 								s2 := strings.Split(v[1],"<")
-								va0, err := version.NewVersion(selectedVer)
-								va1, err := version.NewVersion(s2[0])
-								va2, err := version.NewVersion(s2[1])
+								va0, _ := version.NewVersion(selectedVer)
+								va1, _ := version.NewVersion(s2[0])
+								va2, _ := version.NewVersion(s2[1])
 								if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 									fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 									log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 								}
-								_ = err		
 							} else { 
-								va0, err := version.NewVersion(selectedVer)
-								va1, err := version.NewVersion(v[1])
+								va0, _ := version.NewVersion(selectedVer)
+								va1, _ := version.NewVersion(v[1])
 								if va0.Equal(va1) {
 									fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 									log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 								}
-								_ = err
 							}
 
 						}			
@@ -3743,63 +3594,57 @@ func main() {
 								for _, s1 := range s {
 									if strings.Contains(s1,"-") {
 										s2 := strings.Split(s1,"-")
-										va0, err := version.NewVersion(selectedVer)
-										va1, err := version.NewVersion(s2[0])
-										va2, err := version.NewVersion(s2[1])
+										va0, _ := version.NewVersion(selectedVer)
+										va1, _ := version.NewVersion(s2[0])
+										va2, _ := version.NewVersion(s2[1])
 										if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 											fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 											log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 										}
-										_ = err
 									} else if strings.Contains(s1,"<") {
 										s2 := strings.Split(s1,"<")
-										va0, err := version.NewVersion(selectedVer)
-										va1, err := version.NewVersion(s2[0])
-										va2, err := version.NewVersion(s2[1])
+										va0, _ := version.NewVersion(selectedVer)
+										va1, _ := version.NewVersion(s2[0])
+										va2, _ := version.NewVersion(s2[1])
 										if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 											fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 											log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 										}
-										_ = err		
-									} else { 
-										va0, err := version.NewVersion(selectedVer)
-										va1, err := version.NewVersion(s1)
+									} else {
+										va0, _ := version.NewVersion(selectedVer)
+										va1, _ := version.NewVersion(s1)
 										if va0.Equal(va1) {
 											fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 											log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 										}
-										_ = err
 									}
 								}	
 							} else {
 								if strings.Contains(v[1],"-") {
 									s2 := strings.Split(v[1],"-")
-									va0, err := version.NewVersion(selectedVer)
-									va1, err := version.NewVersion(s2[0])
-									va2, err := version.NewVersion(s2[1])
+									va0, _ := version.NewVersion(selectedVer)
+									va1, _ := version.NewVersion(s2[0])
+									va2, _ := version.NewVersion(s2[1])
 									if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 										fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 										log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 									}
-									_ = err
 								} else if strings.Contains(v[1],"<") {
 									s2 := strings.Split(v[1],"<")
-									va0, err := version.NewVersion(selectedVer)
-									va1, err := version.NewVersion(s2[0])
-									va2, err := version.NewVersion(s2[1])
+									va0, _ := version.NewVersion(selectedVer)
+									va1, _ := version.NewVersion(s2[0])
+									va2, _ := version.NewVersion(s2[1])
 									if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 										fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 										log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 									}
-									_ = err		
-								} else { 
-									va0, err := version.NewVersion(selectedVer)
-									va1, err := version.NewVersion(v[1])
+								} else {
+									va0, _ := version.NewVersion(selectedVer)
+									va1, _ := version.NewVersion(v[1])
 									if va0.Equal(va1) {
 										fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 										log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 									}
-									_ = err
 								}
 
 							}			
@@ -3816,47 +3661,43 @@ func main() {
 							for _, s1 := range s {
 								if strings.Contains(s1,"-") {
 									s2 := strings.Split(s1,"-")
-									va0, err := version.NewVersion(selectedVer)
-									va1, err := version.NewVersion(s2[0])
-									va2, err := version.NewVersion(s2[1])
+									va0, _ := version.NewVersion(selectedVer)
+									va1, _ := version.NewVersion(s2[0])
+									va2, _ := version.NewVersion(s2[1])
 									if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 										fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 										log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 									}
-									_ = err
 								} else if strings.Contains(s1,"<") {
 									s2 := strings.Split(s1,"<")
-									va0, err := version.NewVersion(selectedVer)
-									va1, err := version.NewVersion(s2[0])
-									va2, err := version.NewVersion(s2[1])
+									va0, _ := version.NewVersion(selectedVer)
+									va1, _ := version.NewVersion(s2[0])
+									va2, _ := version.NewVersion(s2[1])
 									if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 										fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 										log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 									}
-									_ = err									
-								} else { 
-									va0, err := version.NewVersion(selectedVer)
-									va1, err := version.NewVersion(s1)
+								} else {
+									va0, _ := version.NewVersion(selectedVer)
+									va1, _ := version.NewVersion(s1)
 									if va0.Equal(va1) {
 										fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 										log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 									}
-									_ = err
 								}
 							}	
 						} else {
 							if strings.Contains(v[1],"-") {
 								s2 := strings.Split(v[1],"-")
-								va0, err := version.NewVersion(selectedVer)
-								va1, err := version.NewVersion(s2[0])
-								va2, err := version.NewVersion(s2[1])
+								va0, _ := version.NewVersion(selectedVer)
+								va1, _ := version.NewVersion(s2[0])
+								va2, _ := version.NewVersion(s2[1])
 								if va0.LessThan(va2) && va0.GreaterThan(va1) { 
 									fmt.Printf("\n[Vuln] 	%s [%s]\n",v[2],v[3])
 									log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 								}
-								_ = err
-							} else { 
-								va0, err := version.NewVersion(selectedVer)
+							} else {
+								va0, _ := version.NewVersion(selectedVer)
 								va1, err := version.NewVersion(v[1])
 								if err==nil {
 									if va0.Equal(va1) {
@@ -3864,7 +3705,6 @@ func main() {
 										log.Printf("[Vuln] 	%s [%s]\n",v[2],v[3])
 									}
 								}
-								_ = err
 							}
 
 						}			
